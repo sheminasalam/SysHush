@@ -3,9 +3,6 @@
   "description": "SysHush is a native Android system-mode utility that uses Accessibility automation to hide supported status-bar information, restore the user's saved settings baseline, and force-stop eligible user apps.",
   "requestFramePermissions": [],
   "majorCapabilities": [
-    "Native Android status-bar automation",
-    "Accessibility-based app management",
-    "Persistent settings backup and restoration",
-    "Jetpack Compose user interface"
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
 }
