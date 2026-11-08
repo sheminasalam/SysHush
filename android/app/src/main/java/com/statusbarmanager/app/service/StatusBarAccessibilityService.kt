@@ -485,7 +485,13 @@ class StatusBarAccessibilityService : AccessibilityService() {
 
         delay(250)
         if (returnToHome) {
-            returnToHomeScreen()
+            if (mode is TargetMode.ForceStopOnly) {
+                // The dedicated Force Stop widget should return to the screen
+                // underneath Settings instead of navigating to launcher Home.
+                performGlobalAction(GLOBAL_ACTION_BACK)
+            } else {
+                returnToHomeScreen()
+            }
         } else {
             returnToApp()
         }
