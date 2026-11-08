@@ -8,16 +8,16 @@
     <!-- Strictly Square 1x1 Squircle Cube Icon with Notification Bubble Badge -->
     <FrameLayout
         android:id="@+id/widget_icon_container"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
         android:layout_gravity="center"
         android:background="@drawable/widget_icon_bg_normal">
 
-        <!-- Centered Proportional 1:1 SysHush App Icon Symbol (28x28dp) -->
+        <!-- Centered Proportional 1:1 SysHush App Icon Symbol (32x32dp) -->
         <ImageView
             android:id="@+id/widget_icon_image"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
             android:layout_gravity="center"
             android:contentDescription="@string/app_name"
             android:src="@drawable/ic_widget_syshush" />

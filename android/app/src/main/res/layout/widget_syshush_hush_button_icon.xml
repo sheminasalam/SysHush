@@ -3,13 +3,21 @@
     android:id="@+id/quick_action_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/widget_background"
-    android:padding="4dp">
+    android:background="@android:color/transparent">
 
-    <ImageView
-        android:layout_width="32dp"
-        android:layout_height="32dp"
+    <!-- Strictly Square 56x56dp Squircle Cube Container (1:1 aspect ratio, matches native app icon) -->
+    <FrameLayout
+        android:layout_width="56dp"
+        android:layout_height="56dp"
         android:layout_gravity="center"
-        android:contentDescription="@string/widget_hush_button_name"
-        android:src="@drawable/ic_widget_syshush" />
+        android:background="@drawable/widget_background">
+
+        <ImageView
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_gravity="center"
+            android:contentDescription="@string/widget_hush_button_name"
+            android:src="@drawable/ic_widget_syshush" />
+    </FrameLayout>
+
 </FrameLayout>

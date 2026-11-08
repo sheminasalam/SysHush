@@ -68,7 +68,10 @@ class DeviceCompatibilityManager {
     )
 
     val batteryStyleLabels = listOf(
+        "Show Battery Percentage on Status Bar",
         "Battery style",
+        "Battery percentage",
+        "Show battery percentage",
         "Battery icon",
         "Battery display",
         "Battery icon style"
@@ -77,8 +80,9 @@ class DeviceCompatibilityManager {
     val doNotShowLabels = listOf(
         "Do not show",
         "Don't show",
-        "Hide",
         "Do not display",
+        "Do Not Display",
+        "Hide",
         "None",
         "Off",
         "Hidden"

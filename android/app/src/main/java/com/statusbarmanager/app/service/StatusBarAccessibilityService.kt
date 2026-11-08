@@ -207,9 +207,9 @@ class StatusBarAccessibilityService : AccessibilityService() {
             updateChecklist("time", StepStatus.COMPLETED, if (isHideMode) "Set to Do not show" else "Restored: $actualCurrentTime")
             delay(120)
 
-            // Configure Battery style (hides battery icon if supported by OEM)
+            // Configure Battery style / Percentage (hides battery percentage / icon on OEM)
             handleBatteryStyleSetting(mode)
-            delay(100)
+            delay(300)
 
             // Step 5: Network speed toggle
             updateChecklist("speed", StepStatus.IN_PROGRESS)
@@ -217,23 +217,28 @@ class StatusBarAccessibilityService : AccessibilityService() {
             val actualNetworkSpeed = handleNetworkSpeedSetting(mode)
             updateChecklist("speed", StepStatus.COMPLETED, if (isHideMode) "Disabled" else "Restored")
             // Crucial: allow switch animation and SystemUI broadcast to fully settle before navigating
-            delay(250)
+            delay(400)
 
             // Step 6: Comprehensive Status Icons Discovery & Toggle
             updateChecklist("scan_icons", StepStatus.IN_PROGRESS)
             publish(AutomationStep.NAVIGATING_TO_STATUS_ICONS, "Accessing Status icons submenu...", 52, 6)
 
             var navigatedToIcons = navigateIntoStatusIconsSubmenu()
-            delay(150)
-
-            publish(AutomationStep.DISCOVERING_ALL_STATUS_ICONS, "Discovering all available status icons...", 58, 6)
-            // Dynamically discover all checkable switch rows with scrolling
-            var discoveredIconsMap = discoverAllStatusIconRows()
-            if (discoveredIconsMap.isEmpty()) {
-                Log.w(TAG, "No status icons found on first discovery pass; re-attempting submenu entry...")
-                navigatedToIcons = navigateIntoStatusIconsSubmenu()
+            if (!navigatedToIcons) {
+                Log.w(TAG, "First attempt to enter Status icons submenu did not confirm; retrying after reset scroll...")
+                scrollToTop()
                 delay(200)
-                discoveredIconsMap = discoverAllStatusIconRows()
+                navigatedToIcons = navigateIntoStatusIconsSubmenu()
+            }
+            delay(250)
+
+            val discoveredIconsMap = if (navigatedToIcons) {
+                publish(AutomationStep.DISCOVERING_ALL_STATUS_ICONS, "Discovering all available status icons...", 58, 6)
+                discoverAllStatusIconRows()
+            } else {
+                Log.e(TAG, "Could not enter Status icons submenu; skipping icon toggles to prevent affecting parent settings")
+                isPartial = true
+                emptyMap()
             }
             Log.i(TAG, "Total status icons dynamically discovered: ${discoveredIconsMap.size} -> ${discoveredIconsMap.keys}")
 
@@ -246,7 +251,7 @@ class StatusBarAccessibilityService : AccessibilityService() {
                 restored = 0,
                 remaining = if (isHideMode) (discoveredCount - alreadyDisabledCount) else discoveredCount
             )
-            updateChecklist("scan_icons", StepStatus.COMPLETED, "$discoveredCount icons discovered")
+            updateChecklist("scan_icons", if (navigatedToIcons) StepStatus.COMPLETED else StepStatus.PARTIAL, "$discoveredCount icons discovered")
             publish(AutomationStep.DISCOVERING_ALL_STATUS_ICONS, "Discovered $discoveredCount status icons", 65, 6, iconStats = stats)
 
             // Save baseline BEFORE changing any icons if hide mode and no backup exists
@@ -784,6 +789,14 @@ class StatusBarAccessibilityService : AccessibilityService() {
         }
 
         val summary = extractSummaryText(batteryNode)
+        val isHide = mode is TargetMode.HideAll || mode is TargetMode.BothEngage
+        if (isHide && summary != null && compatibilityManager.matchesAny(summary, compatibilityManager.doNotShowLabels)) {
+            Log.i(TAG, "Battery percentage already hidden ('$summary'); skipping dialog")
+            batteryNode.recycle()
+            root.recycle()
+            return summary
+        }
+
         val opened = try {
             clickNodeOrParent(batteryNode)
         } finally {
@@ -791,9 +804,9 @@ class StatusBarAccessibilityService : AccessibilityService() {
             root.recycle()
         }
         if (!opened) return summary
-        delay(250)
+        delay(300) // Allow dialog to fully open
 
-        val targetLabels = if (mode is TargetMode.HideAll || mode is TargetMode.BothEngage) {
+        val targetLabels = if (isHide) {
             compatibilityManager.doNotShowLabels
         } else {
             val backup = backupManager.getExistingBackup()
@@ -801,7 +814,7 @@ class StatusBarAccessibilityService : AccessibilityService() {
         }
 
         var selected = false
-        repeat(10) { attempt ->
+        repeat(12) { attempt ->
             if (!selected) {
                 val option = findNodeMatchingInWindows(targetLabels)
                 if (option != null) {
@@ -809,18 +822,18 @@ class StatusBarAccessibilityService : AccessibilityService() {
                     option.recycle()
                     if (selected) {
                         Log.i(TAG, "Selected Battery Style option: ${targetLabels.first()}")
-                        delay(250)
+                        delay(350) // Allow dialog dismiss animation to complete
                         return summary
                     }
                 }
-                if (!selected && attempt < 9) delay(80)
+                if (!selected && attempt < 11) delay(80)
             }
         }
 
         if (!selected) {
             // Dismiss battery dialog without closing the status bar settings page
             performGlobalAction(GLOBAL_ACTION_BACK)
-            delay(200)
+            delay(250)
         }
         return summary
     }
@@ -853,33 +866,115 @@ class StatusBarAccessibilityService : AccessibilityService() {
         return originalState
     }
 
+    private fun isConfirmedInsideStatusIconsSubmenu(root: AccessibilityNodeInfo): Boolean {
+        // If parent page markers are still visible, we have NOT entered the submenu!
+        val parentMarkers = listOf(
+            "Manage notifications",
+            "Real-time network speed",
+            "Show Battery Percentage on Status Bar",
+            "Notification prompt",
+            "Swipe Down on Lock Screen"
+        )
+        if (findNodeMatching(root, parentMarkers) != null) return false
+
+        // In the Status icons submenu:
+        // Check for Status icons header or any checkable icon switch controls
+        val hasStatusIconsTitle = findNodeMatching(root, listOf("Status icons", "Status Icons")) != null
+
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var checkableCount = 0
+
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            if (node.isCheckable) {
+                checkableCount++
+                if (checkableCount >= 1 && hasStatusIconsTitle) {
+                    while (queue.isNotEmpty()) queue.removeFirst().recycle()
+                    if (node !== root) node.recycle()
+                    return true
+                }
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let(queue::add)
+            }
+            if (node !== root) node.recycle()
+        }
+        return checkableCount >= 1 || hasStatusIconsTitle
+    }
+
     private suspend fun navigateIntoStatusIconsSubmenu(): Boolean {
-        // Look for the "Status icons" entry row on the Status bar page
+        // Check if already inside submenu
+        val initialRoot = rootInActiveWindow
+        if (initialRoot != null) {
+            val alreadyIn = isConfirmedInsideStatusIconsSubmenu(initialRoot)
+            initialRoot.recycle()
+            if (alreadyIn) return true
+        }
+
+        // Try to locate and click "Status icons" row
         for (attempt in 0..4) {
             val root = rootInActiveWindow
             if (root != null) {
+                if (isConfirmedInsideStatusIconsSubmenu(root)) {
+                    root.recycle()
+                    return true
+                }
+
                 val iconsMenuNode = findClickableNodeMatching(root, compatibilityManager.statusIconsSubmenuLabels)
                     ?: findNodeMatching(root, compatibilityManager.statusIconsSubmenuLabels)
                 if (iconsMenuNode != null) {
+                    val bounds = Rect()
+                    iconsMenuNode.getBoundsInScreen(bounds)
+
+                    // 1. Accessibility ACTION_CLICK on node or parent
                     val clicked = clickNodeOrParent(iconsMenuNode)
+
+                    // 2. If accessibility action failed or was rejected, use coordinate tap gesture
+                    if (!clicked && !bounds.isEmpty && bounds.centerX() > 0 && bounds.centerY() > 0) {
+                        dispatchTapGesture(bounds.centerX().toFloat(), bounds.centerY().toFloat())
+                    }
+
                     iconsMenuNode.recycle()
                     root.recycle()
-                    if (clicked) {
-                        Log.i(TAG, "Clicked Status icons submenu row successfully")
-                        // Allow fragment animation to transition into the submenu
-                        delay(450)
-                        return true
+
+                    // Poll for fragment transition into submenu (up to 1.8 seconds)
+                    repeat(12) { pollIdx ->
+                        delay(150)
+                        val checkRoot = rootInActiveWindow
+                        if (checkRoot != null) {
+                            val inSubmenu = isConfirmedInsideStatusIconsSubmenu(checkRoot)
+                            checkRoot.recycle()
+                            if (inSubmenu) {
+                                Log.i(TAG, "Successfully confirmed entry into Status icons submenu")
+                                delay(300) // Let list finish rendering
+                                return true
+                            }
+                        }
+                        // Re-tap with coordinate gesture at poll index 4 if still on parent page
+                        if (pollIdx == 4 && !bounds.isEmpty && bounds.centerX() > 0) {
+                            dispatchTapGesture(bounds.centerX().toFloat(), bounds.centerY().toFloat())
+                        }
                     }
                 } else {
                     root.recycle()
                 }
             }
+
             if (attempt < 4) {
-                if (attempt % 2 == 0) scrollForward() else scrollToTop()
-                delay(150)
+                scrollForward()
+                delay(200)
             }
         }
-        return false
+
+        val finalCheck = rootInActiveWindow
+        val success = if (finalCheck != null) {
+            val res = isConfirmedInsideStatusIconsSubmenu(finalCheck)
+            finalCheck.recycle()
+            res
+        } else false
+
+        return success
     }
 
     /**
@@ -961,7 +1056,7 @@ class StatusBarAccessibilityService : AccessibilityService() {
     private fun findLabelForCheckableNode(checkableNode: AccessibilityNodeInfo): String? {
         var parent: AccessibilityNodeInfo? = checkableNode.parent
         var depth = 0
-        while (parent != null && depth < 3) {
+        while (parent != null && depth < 5) {
             val labelCandidate = extractBestRowLabel(parent, checkableNode)
             if (labelCandidate != null) {
                 return labelCandidate
