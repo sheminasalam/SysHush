@@ -333,7 +333,7 @@ export const PhoneSimulator: React.FC<PhoneSimulatorProps> = ({
                   : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
               }`}
             >
-              <span>StatusBar Manager App</span>
+              <span>SysHush App</span>
             </button>
             <button
               onClick={() => setActiveScreen('settings')}
