@@ -1,8 +1,11 @@
 {
-  "name": "StatusBar Manager",
-  "description": "Native Android Accessibility Service & Jetpack Compose app to hide or restore system status bar clock and icons via native Settings automation.",
+  "name": "SysHush",
+  "description": "SysHush is a native Android system-mode utility that uses Accessibility automation to hide supported status-bar information, restore the user's saved settings baseline, and force-stop eligible user apps.",
   "requestFramePermissions": [],
   "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+    "Native Android status-bar automation",
+    "Accessibility-based app management",
+    "Persistent settings backup and restoration",
+    "Jetpack Compose user interface"
   ]
 }
