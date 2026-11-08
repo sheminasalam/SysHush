@@ -301,7 +301,7 @@ class StatusBarAccessibilityService : AccessibilityService() {
             // Return from Status icons submenu if entered
             if (navigatedToIcons) {
                 performGlobalAction(GLOBAL_ACTION_BACK)
-                delay(120)
+                delay(300)
             }
         }
 
@@ -696,6 +696,32 @@ class StatusBarAccessibilityService : AccessibilityService() {
         return StatusBarBackupModel.TIME_SHOW_HOURS_MINUTES
     }
 
+    private fun findNodeMatchingInWindows(candidates: List<String>): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow
+        if (root != null) {
+            val node = findNodeMatching(root, candidates)
+            if (node != null) {
+                if (node !== root) root.recycle()
+                return node
+            }
+            root.recycle()
+        }
+
+        try {
+            val wins = windows
+            for (win in wins) {
+                val winRoot = win.root ?: continue
+                val node = findNodeMatching(winRoot, candidates)
+                if (node != null) {
+                    if (node !== winRoot) winRoot.recycle()
+                    return node
+                }
+                winRoot.recycle()
+            }
+        } catch (_: Exception) {}
+        return null
+    }
+
     private suspend fun handleTimeSetting(mode: TargetMode, detectedCurrentTime: String) {
         val root = rootInActiveWindow ?: return
         val timeNode = findNodeMatching(root, compatibilityManager.timeMenuLabels)
@@ -715,7 +741,8 @@ class StatusBarAccessibilityService : AccessibilityService() {
             Log.w(TAG, "Could not click Time setting row")
             return
         }
-        delay(120)
+        // Wait for bottom sheet / dialog animation to complete
+        delay(250)
 
         val targetLabels = if (mode is TargetMode.HideAll || mode is TargetMode.BothEngage) {
             compatibilityManager.doNotShowLabels
@@ -727,24 +754,24 @@ class StatusBarAccessibilityService : AccessibilityService() {
         var selected = false
         repeat(12) { attempt ->
             if (!selected) {
-                val dialogRoot = rootInActiveWindow
-                if (dialogRoot != null) {
-                    val targetOptionNode = findNodeMatching(dialogRoot, targetLabels)
-                    if (targetOptionNode != null) {
-                        selected = clickNodeOrParent(targetOptionNode)
-                        targetOptionNode.recycle()
+                val targetOptionNode = findNodeMatchingInWindows(targetLabels)
+                if (targetOptionNode != null) {
+                    selected = clickNodeOrParent(targetOptionNode)
+                    targetOptionNode.recycle()
+                    if (selected) {
+                        Log.i(TAG, "Selected Time option: ${targetLabels.first()}")
+                        delay(250) // Allow dialog dismiss animation
+                        return
                     }
-                    dialogRoot.recycle()
                 }
-                if (!selected && attempt < 11) delay(60)
+                if (!selected && attempt < 11) delay(80)
             }
         }
 
-        if (selected) {
-            Log.i(TAG, "Selected Time option: ${targetLabels.first()}")
-        } else {
+        if (!selected) {
             Log.w(TAG, "Could not find Time dialog option for: $targetLabels")
             performGlobalAction(GLOBAL_ACTION_BACK)
+            delay(200)
         }
     }
 
@@ -764,7 +791,7 @@ class StatusBarAccessibilityService : AccessibilityService() {
             root.recycle()
         }
         if (!opened) return summary
-        delay(120)
+        delay(250)
 
         val targetLabels = if (mode is TargetMode.HideAll || mode is TargetMode.BothEngage) {
             compatibilityManager.doNotShowLabels
@@ -776,23 +803,24 @@ class StatusBarAccessibilityService : AccessibilityService() {
         var selected = false
         repeat(10) { attempt ->
             if (!selected) {
-                val dialogRoot = rootInActiveWindow
-                if (dialogRoot != null) {
-                    val option = findNodeMatching(dialogRoot, targetLabels)
-                    if (option != null) {
-                        selected = clickNodeOrParent(option)
-                        option.recycle()
+                val option = findNodeMatchingInWindows(targetLabels)
+                if (option != null) {
+                    selected = clickNodeOrParent(option)
+                    option.recycle()
+                    if (selected) {
+                        Log.i(TAG, "Selected Battery Style option: ${targetLabels.first()}")
+                        delay(250)
+                        return summary
                     }
-                    dialogRoot.recycle()
                 }
-                if (!selected && attempt < 9) delay(60)
+                if (!selected && attempt < 9) delay(80)
             }
         }
 
-        if (selected) {
-            Log.i(TAG, "Selected Battery Style option: ${targetLabels.first()}")
-        } else {
+        if (!selected) {
+            // Dismiss battery dialog without closing the status bar settings page
             performGlobalAction(GLOBAL_ACTION_BACK)
+            delay(200)
         }
         return summary
     }
@@ -816,7 +844,7 @@ class StatusBarAccessibilityService : AccessibilityService() {
                 } else {
                     Log.i(TAG, "Requested real-time network speed state: $targetState")
                 }
-                delay(80)
+                delay(120)
             }
             toggleNode.recycle()
         }
@@ -825,58 +853,22 @@ class StatusBarAccessibilityService : AccessibilityService() {
         return originalState
     }
 
-    private fun isInsideStatusIconsSubmenu(): Boolean {
-        val root = rootInActiveWindow ?: return false
-        try {
-            var checkableCount = 0
-            val queue = ArrayDeque<AccessibilityNodeInfo>()
-            queue.add(root)
-            while (queue.isNotEmpty()) {
-                val node = queue.removeFirst()
-                if (node.isCheckable) {
-                    val label = findLabelForCheckableNode(node)
-                    if (label != null && !compatibilityManager.isDisallowedStatusIconRow(label)) {
-                        checkableCount++
-                        if (checkableCount >= 2) {
-                            while (queue.isNotEmpty()) queue.removeFirst().recycle()
-                            if (node !== root) node.recycle()
-                            return true
-                        }
-                    }
-                }
-                for (i in 0 until node.childCount) {
-                    node.getChild(i)?.let(queue::add)
-                }
-                if (node !== root) node.recycle()
-            }
-            return checkableCount >= 1
-        } finally {
-            root.recycle()
-        }
-    }
-
     private suspend fun navigateIntoStatusIconsSubmenu(): Boolean {
-        if (isInsideStatusIconsSubmenu()) return true
-
+        // Look for the "Status icons" entry row on the Status bar page
         for (attempt in 0..4) {
             val root = rootInActiveWindow
             if (root != null) {
-                val iconsMenuNode = findNodeMatching(root, compatibilityManager.statusIconsSubmenuLabels)
+                val iconsMenuNode = findClickableNodeMatching(root, compatibilityManager.statusIconsSubmenuLabels)
+                    ?: findNodeMatching(root, compatibilityManager.statusIconsSubmenuLabels)
                 if (iconsMenuNode != null) {
                     val clicked = clickNodeOrParent(iconsMenuNode)
                     iconsMenuNode.recycle()
                     root.recycle()
                     if (clicked) {
-                        // Poll rootInActiveWindow until the destination submenu appears
-                        var arrived = false
-                        repeat(15) {
-                            delay(80)
-                            if (isInsideStatusIconsSubmenu()) {
-                                arrived = true
-                                return@repeat
-                            }
-                        }
-                        if (arrived || isInsideStatusIconsSubmenu()) return true
+                        Log.i(TAG, "Clicked Status icons submenu row successfully")
+                        // Allow fragment animation to transition into the submenu
+                        delay(450)
+                        return true
                     }
                 } else {
                     root.recycle()
@@ -884,10 +876,10 @@ class StatusBarAccessibilityService : AccessibilityService() {
             }
             if (attempt < 4) {
                 if (attempt % 2 == 0) scrollForward() else scrollToTop()
-                delay(100)
+                delay(150)
             }
         }
-        return isInsideStatusIconsSubmenu()
+        return false
     }
 
     /**
