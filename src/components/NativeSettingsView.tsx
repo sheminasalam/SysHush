@@ -59,7 +59,7 @@ export const NativeSettingsView: React.FC<NativeSettingsViewProps> = ({
               className="p-1 -ml-1 text-gray-300 hover:text-white flex items-center space-x-1"
             >
               <ChevronLeft className="w-5 h-5" />
-              <span className="text-xs text-blue-400 font-medium">StatusBar Manager</span>
+              <span className="text-xs text-blue-400 font-medium">SysHush</span>
             </button>
           )}
           <span className="text-sm font-semibold text-white">
