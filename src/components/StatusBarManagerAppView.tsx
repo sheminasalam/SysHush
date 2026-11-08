@@ -70,7 +70,7 @@ export const StatusBarManagerAppView: React.FC<StatusBarManagerAppViewProps> = (
           </div>
           <div>
             <h1 className="text-base font-bold text-white tracking-tight leading-tight">
-              StatusBar Manager
+              SysHush
             </h1>
             <p className="text-[10px] text-gray-400">
               Control the visibility of your Android status bar.
@@ -88,7 +88,7 @@ export const StatusBarManagerAppView: React.FC<StatusBarManagerAppViewProps> = (
               <span className="font-semibold text-white">Accessibility Permission Required</span>
             </div>
             <p className="text-[11px] text-red-300 leading-relaxed mb-2">
-              StatusBar Manager needs Accessibility Service permission to automate system settings without root.
+              SysHush needs Accessibility Service permission to automate system settings without root.
             </p>
             <button
               onClick={onRequestAccessibility}
