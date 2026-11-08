@@ -21,7 +21,7 @@ export const ArchitectureDoc: React.FC = () => {
           </div>
           <div>
             <h2 className="text-lg font-bold text-white">
-              StatusBar Manager – Architecture & Engineering Specifications
+              SysHush – Architecture & Engineering Specifications
             </h2>
             <p className="text-xs text-blue-400">
               Native Android Accessibility Service & Jetpack Compose Material 3 System Bar Automation
@@ -29,7 +29,7 @@ export const ArchitectureDoc: React.FC = () => {
           </div>
         </div>
         <p className="text-xs leading-relaxed text-gray-300">
-          StatusBar Manager controls the visibility of the Android status bar clock and status icons
+          SysHush controls the visibility of the Android status bar clock and status icons
           across the entire phone without requiring root access, ADB commands, or{' '}
           <code className="text-blue-300 bg-black/40 px-1 py-0.5 rounded font-mono">WRITE_SECURE_SETTINGS</code>.
           It achieves system-wide persistence by programmatically driving the device manufacturer's native
@@ -149,7 +149,7 @@ export const ArchitectureDoc: React.FC = () => {
             <span className="w-5 h-5 rounded-full bg-blue-600/30 text-blue-400 flex items-center justify-center shrink-0 text-[10px] font-bold">6</span>
             <div>
               <div className="text-white font-semibold">Verification &amp; Return</div>
-              <div className="text-[11px] text-gray-400 mt-0.5">Reads resulting state from screen hierarchy. If verified, calls <code className="text-blue-300 font-mono">performGlobalAction(GLOBAL_ACTION_BACK)</code> and brings StatusBar Manager to the foreground.</div>
+              <div className="text-[11px] text-gray-400 mt-0.5">Reads resulting state from screen hierarchy. If verified, calls <code className="text-blue-300 font-mono">performGlobalAction(GLOBAL_ACTION_BACK)</code> and brings SysHush to the foreground.</div>
             </div>
           </div>
         </div>
