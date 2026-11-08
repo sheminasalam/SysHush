@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "StatusBarManager"
+rootProject.name = "SysHush"
 include(":app")
