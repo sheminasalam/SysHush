@@ -207,10 +207,6 @@ class StatusBarAccessibilityService : AccessibilityService() {
             updateChecklist("time", StepStatus.COMPLETED, if (isHideMode) "Set to Do not show" else "Restored: $actualCurrentTime")
             delay(120)
 
-            // Configure Battery style / Percentage (hides battery percentage / icon on OEM)
-            handleBatteryStyleSetting(mode)
-            delay(300)
-
             // Step 5: Network speed toggle
             updateChecklist("speed", StepStatus.IN_PROGRESS)
             publish(AutomationStep.CONFIGURING_NETWORK_SPEED, "Checking Real-time network speed...", 46, 5)
@@ -778,64 +774,6 @@ class StatusBarAccessibilityService : AccessibilityService() {
             performGlobalAction(GLOBAL_ACTION_BACK)
             delay(200)
         }
-    }
-
-    private suspend fun handleBatteryStyleSetting(mode: TargetMode): String? {
-        val root = rootInActiveWindow ?: return null
-        val batteryNode = findNodeMatching(root, compatibilityManager.batteryStyleLabels)
-        if (batteryNode == null) {
-            root.recycle()
-            return null
-        }
-
-        val summary = extractSummaryText(batteryNode)
-        val isHide = mode is TargetMode.HideAll || mode is TargetMode.BothEngage
-        if (isHide && summary != null && compatibilityManager.matchesAny(summary, compatibilityManager.doNotShowLabels)) {
-            Log.i(TAG, "Battery percentage already hidden ('$summary'); skipping dialog")
-            batteryNode.recycle()
-            root.recycle()
-            return summary
-        }
-
-        val opened = try {
-            clickNodeOrParent(batteryNode)
-        } finally {
-            batteryNode.recycle()
-            root.recycle()
-        }
-        if (!opened) return summary
-        delay(300) // Allow dialog to fully open
-
-        val targetLabels = if (isHide) {
-            compatibilityManager.doNotShowLabels
-        } else {
-            val backup = backupManager.getExistingBackup()
-            listOfNotNull(summary, "Horizontal", "Default").filter { it.isNotBlank() }
-        }
-
-        var selected = false
-        repeat(12) { attempt ->
-            if (!selected) {
-                val option = findNodeMatchingInWindows(targetLabels)
-                if (option != null) {
-                    selected = clickNodeOrParent(option)
-                    option.recycle()
-                    if (selected) {
-                        Log.i(TAG, "Selected Battery Style option: ${targetLabels.first()}")
-                        delay(350) // Allow dialog dismiss animation to complete
-                        return summary
-                    }
-                }
-                if (!selected && attempt < 11) delay(80)
-            }
-        }
-
-        if (!selected) {
-            // Dismiss battery dialog without closing the status bar settings page
-            performGlobalAction(GLOBAL_ACTION_BACK)
-            delay(250)
-        }
-        return summary
     }
 
     private suspend fun handleNetworkSpeedSetting(mode: TargetMode): Boolean {
