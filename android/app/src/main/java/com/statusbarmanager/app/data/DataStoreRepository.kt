@@ -34,6 +34,7 @@ class DataStoreRepository(private val context: Context) {
         val ENGAGE_MODE = stringPreferencesKey("engage_mode")
         val ACTIVE_ENGAGEMENT_MODE = stringPreferencesKey("active_engagement_mode")
         val WHITELIST_PACKAGES = stringSetPreferencesKey("whitelist_packages")
+        val INCLUDED_SYSTEM_APPS = stringSetPreferencesKey("included_system_apps")
         val LAST_FORCE_STOP_STATS = stringPreferencesKey("last_force_stop_stats")
     }
 
@@ -60,6 +61,14 @@ class DataStoreRepository(private val context: Context) {
         }
         .map { preferences ->
             preferences[PreferencesKeys.WHITELIST_PACKAGES] ?: emptySet()
+        }
+
+    val includedSystemAppsFlow: Flow<Set<String>> = context.dataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { preferences ->
+            preferences[PreferencesKeys.INCLUDED_SYSTEM_APPS] ?: emptySet()
         }
 
     val isHideActiveFlow: Flow<Boolean> = context.dataStore.data
@@ -170,6 +179,25 @@ class DataStoreRepository(private val context: Context) {
     suspend fun getWhitelist(): Set<String> {
         val prefs = context.dataStore.data.first()
         return prefs[PreferencesKeys.WHITELIST_PACKAGES] ?: emptySet()
+    }
+
+    suspend fun addIncludedSystemApp(packageName: String) {
+        context.dataStore.edit { preferences ->
+            val current = preferences[PreferencesKeys.INCLUDED_SYSTEM_APPS] ?: emptySet()
+            preferences[PreferencesKeys.INCLUDED_SYSTEM_APPS] = current + packageName
+        }
+    }
+
+    suspend fun removeIncludedSystemApp(packageName: String) {
+        context.dataStore.edit { preferences ->
+            val current = preferences[PreferencesKeys.INCLUDED_SYSTEM_APPS] ?: emptySet()
+            preferences[PreferencesKeys.INCLUDED_SYSTEM_APPS] = current - packageName
+        }
+    }
+
+    suspend fun getIncludedSystemApps(): Set<String> {
+        val prefs = context.dataStore.data.first()
+        return prefs[PreferencesKeys.INCLUDED_SYSTEM_APPS] ?: emptySet()
     }
 
     suspend fun saveOriginalBackup(backup: StatusBarBackupModel) {

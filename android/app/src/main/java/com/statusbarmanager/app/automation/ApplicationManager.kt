@@ -24,7 +24,8 @@ data class AppItem(
     val isWhitelisted: Boolean,
     val isProtectedRole: Boolean,
     val protectionReason: String? = null,
-    val isStopped: Boolean = false
+    val isStopped: Boolean = false,
+    val isIncludedSystemApp: Boolean = false
 )
 
 class ApplicationManager(private val context: Context) {
@@ -66,7 +67,10 @@ class ApplicationManager(private val context: Context) {
         return resolveInfo?.activityInfo?.packageName
     }
 
-    fun getInstalledApplications(userWhitelist: Set<String>): List<AppItem> {
+    fun getInstalledApplications(
+        userWhitelist: Set<String>,
+        includedSystemApps: Set<String> = emptySet()
+    ): List<AppItem> {
         val installed = try {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                 packageManager.getInstalledApplications(
@@ -118,21 +122,23 @@ class ApplicationManager(private val context: Context) {
                 isWhitelisted = userWhitelist.contains(pkg),
                 isProtectedRole = protectionReason != null,
                 protectionReason = protectionReason,
-                isStopped = isStopped
+                isStopped = isStopped,
+                isIncludedSystemApp = includedSystemApps.contains(pkg)
             )
-        }.sortedWith(compareBy({ it.isSystemApp }, { it.isProtectedRole }, { it.appName.lowercase() }))
+        }.sortedWith(compareBy({ it.isProtectedRole }, { !it.isIncludedSystemApp }, { it.isSystemApp }, { it.appName.lowercase() }))
     }
 
     /**
-     * Selects only non-cached user apps that Android currently reports as running.
+     * Selects only non-cached user apps (and user-included system apps such as Chrome)
+     * that Android currently reports as running.
      *
-     * Unlike UsageStatsManager's last-used timestamp, this does not include an app
-     * merely because it was opened during a recent time window. Cached-only processes
-     * are excluded because Android can retain them after the user closes an app.
-     *
+     * Cached-only processes are excluded because Android can retain them after the user closes an app.
      * This is a live-process approximation, not a guaranteed list of Recents task cards.
      */
-    fun getEligibleAppsForForceStop(userWhitelist: Set<String>): List<AppItem> {
+    fun getEligibleAppsForForceStop(
+        userWhitelist: Set<String>,
+        includedSystemApps: Set<String> = emptySet()
+    ): List<AppItem> {
         val myPackage = context.packageName
         val launcherPackage = getDefaultLauncherPackage()
         val imePackage = getActiveInputMethodPackage()
@@ -167,7 +173,7 @@ class ApplicationManager(private val context: Context) {
             }
         }
 
-        // 2. Discover all installed third-party user applications
+        // 2. Discover all installed third-party user applications and user-included system apps
         val installed = try {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                 packageManager.getInstalledApplications(
@@ -192,8 +198,11 @@ class ApplicationManager(private val context: Context) {
                 (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP != 0)
             val isStopped = (appInfo.flags and ApplicationInfo.FLAG_STOPPED) != 0
 
-            // Skip system apps and apps that are already in the stopped state
-            if (isSystem || isStopped) continue
+            // Skip apps that are already in the stopped state
+            if (isStopped) continue
+
+            // For system apps, only permit if user explicitly added to includedSystemApps
+            if (isSystem && !includedSystemApps.contains(pkg)) continue
 
             // Must be a user-launchable application (e.g. WhatsApp, Spotify, Chrome)
             val launchIntent = packageManager.getLaunchIntentForPackage(pkg)
@@ -209,10 +218,11 @@ class ApplicationManager(private val context: Context) {
                 AppItem(
                     packageName = pkg,
                     appName = label,
-                    isSystemApp = false,
+                    isSystemApp = isSystem,
                     isWhitelisted = false,
                     isProtectedRole = false,
-                    isStopped = false
+                    isStopped = false,
+                    isIncludedSystemApp = isSystem && includedSystemApps.contains(pkg)
                 )
             )
         }

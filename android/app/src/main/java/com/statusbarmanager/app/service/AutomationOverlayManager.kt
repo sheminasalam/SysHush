@@ -45,55 +45,13 @@ class AutomationOverlayManager(private val context: Context) {
     }
 
     fun updateProgress(progress: AutomationProgress) {
-        updateNotification(progress)
-    }
-
-    private fun updateNotification(progress: AutomationProgress) {
-        val manager = notificationManager ?: return
+        // Deliberately do not post progress notifications to the system notification shade.
+        // User explicitly requested removing the process progress notifications.
         val finished = progress.currentStep == AutomationStep.COMPLETED ||
             progress.currentStep == AutomationStep.PARTIAL ||
             progress.currentStep == AutomationStep.FAILED
-
-        val title = when (progress.currentStep) {
-            AutomationStep.COMPLETED -> "SysHush completed"
-            AutomationStep.PARTIAL -> "SysHush partially completed"
-            AutomationStep.FAILED -> "SysHush failed"
-            else -> "SysHush is working"
-        }
-        val text = when (progress.currentStep) {
-            AutomationStep.COMPLETED -> "Operation completed successfully"
-            AutomationStep.PARTIAL -> "Some items could not be processed"
-            AutomationStep.FAILED -> progress.errorReason
-                ?: progress.currentOperation
-                ?: "Operation could not be completed"
-            else -> "Working… ${progress.percentage.coerceIn(0, 99)}%"
-        }
-
-        val openIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            NOTIFICATION_ID,
-            openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_menu_manage)
-            .setContentTitle(title)
-            .setContentText(text.take(180))
-            .setContentIntent(pendingIntent)
-            .setProgress(100, progress.percentage.coerceIn(0, 100), false)
-            .setOngoing(!finished)
-            .setAutoCancel(finished)
-            .setOnlyAlertOnce(true)
-            .build()
-
-        try {
-            manager.notify(NOTIFICATION_ID, notification)
-        } catch (_: SecurityException) {
-            // Automation continues even when notification permission is denied.
+        if (finished) {
+            dismiss()
         }
     }
 

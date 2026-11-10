@@ -63,8 +63,14 @@ class AppForceStopAccessibilityController(
     /**
      * Attempts to force stop a single target app.
      */
-    suspend fun forceStopApp(appItem: AppItem): ForceStopResult {
-        if (appItem.isSystemApp || appItem.isProtectedRole) {
+    suspend fun forceStopApp(
+        appItem: AppItem,
+        includedSystemApps: Set<String> = emptySet()
+    ): ForceStopResult {
+        if (appItem.isProtectedRole) {
+            return ForceStopResult.SKIPPED_PROTECTED
+        }
+        if (appItem.isSystemApp && !appItem.isIncludedSystemApp && !includedSystemApps.contains(appItem.packageName)) {
             return ForceStopResult.SKIPPED_PROTECTED
         }
         if (appItem.isWhitelisted) {
@@ -86,7 +92,7 @@ class AppForceStopAccessibilityController(
         // Step 2 & 3: Find Force Stop button in active window
         var targetPageSeen = false
         var forceStopNode: AccessibilityNodeInfo? = null
-        repeat(18) { attempt ->
+        repeat(14) { attempt ->
             if (forceStopNode == null) {
                 val activeRoot = service.rootInActiveWindow
                 if (activeRoot != null) {
@@ -100,16 +106,18 @@ class AppForceStopAccessibilityController(
                     }
                     activeRoot.recycle()
                 }
-                if (forceStopNode == null && attempt < 17) delay(70)
+                if (forceStopNode == null && attempt < 13) delay(70)
             }
         }
 
         if (!targetPageSeen) {
             Log.e(TAG, "App Info screen did not confirm target app ${appItem.packageName}")
+            service.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
             return ForceStopResult.FAILED_OPENING_SETTINGS
         }
         if (forceStopNode == null) {
             Log.w(TAG, "Force Stop button not found in target app UI for ${appItem.packageName}")
+            service.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
             return ForceStopResult.UNAVAILABLE_OR_DISABLED
         }
 
@@ -141,6 +149,7 @@ class AppForceStopAccessibilityController(
         if (!isEnabled || forceStopNode == null) {
             Log.i(TAG, "Force Stop button is disabled; app is already stopped: ${appItem.packageName}")
             forceStopNode?.recycle()
+            service.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
             return ForceStopResult.ALREADY_STOPPED
         }
 
@@ -151,13 +160,14 @@ class AppForceStopAccessibilityController(
 
         if (!clicked) {
             Log.e(TAG, "Failed to perform click on Force Stop button for ${appItem.packageName}")
+            service.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
             return ForceStopResult.UNAVAILABLE_OR_DISABLED
         }
 
         // Step 6 & 7: Handle the native confirmation dialog and verify the
         // Force stop button becomes disabled.
         var confirmationClicked = false
-        repeat(16) { attempt ->
+        repeat(12) { attempt ->
             if (!confirmationClicked) {
                 val confirmNode = findConfirmationInWindows()
                 if (confirmNode != null) {
@@ -180,6 +190,7 @@ class AppForceStopAccessibilityController(
                     activeRoot.recycle()
                     if (isNowDisabled) {
                         Log.i(TAG, "Verified Force Stop for ${appItem.packageName}")
+                        service.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
                         return ForceStopResult.SUCCESSFULLY_STOPPED
                     }
                 } else {
@@ -192,10 +203,12 @@ class AppForceStopAccessibilityController(
         // If dialog was confirmed, the OS kill command has been dispatched
         if (confirmationClicked) {
             Log.i(TAG, "Force stop confirmation accepted for ${appItem.packageName}")
+            service.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
             return ForceStopResult.SUCCESSFULLY_STOPPED
         }
 
         Log.w(TAG, "Could not verify Force Stop for ${appItem.packageName}; confirmationClicked=$confirmationClicked")
+        service.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
         return ForceStopResult.FAILED_CONFIRMATION
     }
 
@@ -255,7 +268,7 @@ class AppForceStopAccessibilityController(
         return try {
             val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                 data = Uri.parse("package:$packageName")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             context.startActivity(intent)
             true

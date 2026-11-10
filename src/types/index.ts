@@ -73,6 +73,7 @@ export interface AppItem {
   isProtectedRole: boolean;
   protectionReason?: string;
   isStopped?: boolean;
+  isIncludedSystemApp?: boolean;
 }
 
 export interface AppForceStopStats {

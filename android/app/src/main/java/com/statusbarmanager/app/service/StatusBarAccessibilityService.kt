@@ -6,10 +6,13 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Path
 import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Toast
 import com.statusbarmanager.app.automation.*
 import com.statusbarmanager.app.data.DataStoreRepository
 import com.statusbarmanager.app.data.SettingsBackupManager
@@ -312,10 +315,11 @@ class StatusBarAccessibilityService : AccessibilityService() {
         if (isForceStopMode) {
             updateChecklist("scan_apps", StepStatus.IN_PROGRESS)
             updateChecklist("apps", StepStatus.IN_PROGRESS)
-            publish(AutomationStep.SCANNING_APPLICATIONS, "Scanning eligible user applications...", 60, 5, iconStats = stats)
+            publish(AutomationStep.SCANNING_APPLICATIONS, "Scanning eligible applications...", 60, 5, iconStats = stats)
             
-            val eligibleApps = appManager.getEligibleAppsForForceStop(userWhitelist)
-            Log.i(TAG, "Discovered ${eligibleApps.size} eligible applications for force-stop batch")
+            val includedSystemApps = dataStoreRepository.getIncludedSystemApps()
+            val eligibleApps = appManager.getEligibleAppsForForceStop(userWhitelist, includedSystemApps)
+            Log.i(TAG, "Discovered ${eligibleApps.size} eligible applications for force-stop batch (included system apps: ${includedSystemApps.size})")
             updateChecklist("scan_apps", StepStatus.COMPLETED, "${eligibleApps.size} eligible apps")
 
             currentAppStats = currentAppStats.copy(
@@ -328,7 +332,7 @@ class StatusBarAccessibilityService : AccessibilityService() {
 
                 // Pass 1: Primary force stop pass across all eligible apps
                 eligibleApps.forEachIndexed { idx, app ->
-                    val appProgressPercent = 60 + ((idx + 1) * 20 / eligibleApps.size)
+                    val appProgressPercent = 60 + ((idx + 1) * 25 / eligibleApps.size)
                     currentAppStats = currentAppStats.copy(
                         currentAppName = app.appName,
                         remaining = eligibleApps.size - idx
@@ -343,8 +347,8 @@ class StatusBarAccessibilityService : AccessibilityService() {
                         appStats = currentAppStats
                     )
 
-                    forceStopController.forceStopApp(app)
-                    delay(160)
+                    forceStopController.forceStopApp(app, includedSystemApps)
+                    delay(120)
                 }
 
                 // Verify Ground Truth via ApplicationInfo.FLAG_STOPPED:
@@ -353,42 +357,21 @@ class StatusBarAccessibilityService : AccessibilityService() {
                     !isAppStopped(app.packageName)
                 }
 
-                // Automatic Pass 2: Retry any applications that are still running after Pass 1
+                // Automatic Pass 2: Single retry pass for any applications that are still running after Pass 1
                 if (pendingRetryApps.isNotEmpty()) {
                     Log.i(TAG, "Pass 1 complete. ${pendingRetryApps.size} apps remain running. Executing Pass 2...")
-                    delay(200)
+                    delay(150)
                     pendingRetryApps.forEachIndexed { rIdx, app ->
                         publish(
                             AutomationStep.FORCE_STOPPING_APPS,
                             "Retrying ${app.appName} (Pass 2: ${rIdx + 1}/${pendingRetryApps.size})...",
-                            82 + ((rIdx + 1) * 8 / pendingRetryApps.size),
+                            85 + ((rIdx + 1) * 10 / pendingRetryApps.size),
                             6,
                             iconStats = stats,
                             appStats = currentAppStats
                         )
-                        forceStopController.forceStopApp(app)
-                        delay(160)
-                    }
-                }
-
-                // Final Pass 3 for any remaining stubborn apps
-                val finalUnstopped = eligibleApps.filter { app ->
-                    !isAppStopped(app.packageName)
-                }
-                if (finalUnstopped.isNotEmpty()) {
-                    Log.i(TAG, "Pass 2 complete. ${finalUnstopped.size} apps remain. Executing final Pass 3...")
-                    delay(200)
-                    finalUnstopped.forEachIndexed { rIdx, app ->
-                        publish(
-                            AutomationStep.FORCE_STOPPING_APPS,
-                            "Final check ${app.appName} (${rIdx + 1}/${finalUnstopped.size})...",
-                            92 + ((rIdx + 1) * 4 / finalUnstopped.size),
-                            6,
-                            iconStats = stats,
-                            appStats = currentAppStats
-                        )
-                        forceStopController.forceStopApp(app)
-                        delay(160)
+                        forceStopController.forceStopApp(app, includedSystemApps)
+                        delay(120)
                     }
                 }
 
@@ -413,6 +396,7 @@ class StatusBarAccessibilityService : AccessibilityService() {
             } else {
                 updateChecklist("force_stop", StepStatus.COMPLETED, "0 eligible apps to process")
                 updateChecklist("apps", StepStatus.COMPLETED, "0 eligible apps to process")
+                showToast("No apps need stopping")
             }
         }
 
@@ -1388,6 +1372,10 @@ class StatusBarAccessibilityService : AccessibilityService() {
             (appInfo.flags and ApplicationInfo.FLAG_STOPPED) != 0
         } catch (e: Exception) {
             true
+        }
+    private fun showToast(message: String) {
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
         }
     }
 

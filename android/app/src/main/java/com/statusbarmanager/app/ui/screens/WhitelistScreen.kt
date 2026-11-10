@@ -32,30 +32,32 @@ import com.statusbarmanager.app.ui.theme.*
 fun WhitelistScreen(
     apps: List<AppItem>,
     whitelist: Set<String>,
+    includedSystemApps: Set<String> = emptySet(),
     onToggleWhitelist: (packageName: String) -> Unit,
+    onToggleIncludedSystemApp: (packageName: String) -> Unit,
     onBack: () -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
-    var selectedFilter by remember { mutableStateOf("Eligible") } // "Eligible", "Whitelisted", "System / Protected"
+    var selectedFilter by remember { mutableStateOf("Eligible") } // "Eligible", "Whitelisted", "System Apps"
 
-    val filteredApps = remember(apps, searchQuery, selectedFilter, whitelist) {
+    val filteredApps = remember(apps, searchQuery, selectedFilter, whitelist, includedSystemApps) {
         apps.filter { app ->
             val matchesSearch = app.appName.contains(searchQuery, ignoreCase = true) ||
                     app.packageName.contains(searchQuery, ignoreCase = true)
             if (!matchesSearch) return@filter false
 
             when (selectedFilter) {
-                "Eligible" -> !app.isSystemApp && !app.isProtectedRole && !whitelist.contains(app.packageName)
+                "Eligible" -> (!app.isSystemApp && !app.isProtectedRole && !whitelist.contains(app.packageName)) || includedSystemApps.contains(app.packageName)
                 "Whitelisted" -> whitelist.contains(app.packageName)
-                "System / Protected" -> app.isSystemApp || app.isProtectedRole
+                "System Apps" -> app.isSystemApp
                 else -> true
             }
         }
     }
 
-    val totalEligible = apps.count { !it.isSystemApp && !it.isProtectedRole && !whitelist.contains(it.packageName) }
+    val totalEligible = apps.count { (!it.isSystemApp && !it.isProtectedRole && !whitelist.contains(it.packageName)) || includedSystemApps.contains(it.packageName) }
     val totalWhitelisted = whitelist.size
-    val totalProtected = apps.count { it.isSystemApp || it.isProtectedRole }
+    val totalSystem = apps.count { it.isSystemApp }
 
     Scaffold(
         containerColor = DarkBackground,
@@ -64,14 +66,14 @@ fun WhitelistScreen(
                 title = {
                     Column {
                         Text(
-                            text = "Protected Apps / Whitelist",
+                            text = "Apps & Force Stop Control",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 color = TextPrimary
                             )
                         )
                         Text(
-                            text = "$totalEligible eligible for force stop • $totalWhitelisted whitelisted",
+                            text = "$totalEligible eligible for force stop • ${includedSystemApps.size} system apps included",
                             style = MaterialTheme.typography.labelSmall.copy(color = TextSecondary)
                         )
                     }
@@ -98,7 +100,7 @@ fun WhitelistScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp),
-                placeholder = { Text("Search installed applications...", color = TextMuted) },
+                placeholder = { Text("Search installed applications (e.g. Chrome)...", color = TextMuted) },
                 leadingIcon = {
                     Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = TextMuted)
                 },
@@ -132,9 +134,9 @@ fun WhitelistScreen(
                     onClick = { selectedFilter = "Whitelisted" }
                 )
                 FilterTabItem(
-                    title = "Protected ($totalProtected)",
-                    isSelected = selectedFilter == "System / Protected",
-                    onClick = { selectedFilter = "System / Protected" }
+                    title = "System Apps ($totalSystem)",
+                    isSelected = selectedFilter == "System Apps",
+                    onClick = { selectedFilter = "System Apps" }
                 )
             }
 
@@ -158,7 +160,7 @@ fun WhitelistScreen(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "System components, launchers, keyboards, and whitelisted apps are strictly excluded from Force Stop batches.",
+                        text = "System components (launchers, keyboards) stay safe. Add user system apps (like Chrome) to include them in Force Stop.",
                         style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, fontSize = 11.sp)
                     )
                 }
@@ -172,10 +174,13 @@ fun WhitelistScreen(
             ) {
                 items(filteredApps, key = { it.packageName }) { app ->
                     val isWhitelisted = whitelist.contains(app.packageName)
+                    val isIncluded = includedSystemApps.contains(app.packageName)
                     AppItemRow(
                         app = app,
                         isWhitelisted = isWhitelisted,
-                        onToggle = { onToggleWhitelist(app.packageName) }
+                        isIncludedSystemApp = isIncluded,
+                        onToggleWhitelist = { onToggleWhitelist(app.packageName) },
+                        onToggleIncludedSystemApp = { onToggleIncludedSystemApp(app.packageName) }
                     )
                 }
             }
@@ -215,7 +220,9 @@ fun FilterTabItem(
 fun AppItemRow(
     app: AppItem,
     isWhitelisted: Boolean,
-    onToggle: () -> Unit
+    isIncludedSystemApp: Boolean,
+    onToggleWhitelist: () -> Unit,
+    onToggleIncludedSystemApp: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -237,6 +244,7 @@ fun AppItemRow(
                     .background(
                         when {
                             app.isProtectedRole -> PurpleSurface
+                            isIncludedSystemApp -> BlueSurface
                             app.isSystemApp -> Color(0xFF1E293B)
                             isWhitelisted -> EmeraldSurface
                             else -> DarkSurfaceElevated
@@ -247,6 +255,7 @@ fun AppItemRow(
                 Icon(
                     imageVector = when {
                         app.isProtectedRole -> Icons.Default.Security
+                        isIncludedSystemApp -> Icons.Default.CheckCircle
                         app.isSystemApp -> Icons.Default.Settings
                         isWhitelisted -> Icons.Default.VerifiedUser
                         else -> Icons.Default.Apps
@@ -254,6 +263,7 @@ fun AppItemRow(
                     contentDescription = null,
                     tint = when {
                         app.isProtectedRole -> PurpleText
+                        isIncludedSystemApp -> BlueAccent
                         app.isSystemApp -> TextMuted
                         isWhitelisted -> SuccessEmerald
                         else -> BlueAccent
@@ -265,13 +275,33 @@ fun AppItemRow(
             Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = app.appName,
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = app.appName,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        ),
+                        modifier = Modifier.weight(1f, fill = false)
                     )
-                )
+                    if (app.isSystemApp) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = if (isIncludedSystemApp) BlueSurface else DarkSurfaceElevated
+                        ) {
+                            Text(
+                                text = if (isIncludedSystemApp) "KILL ON" else "SYSTEM",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isIncludedSystemApp) BlueAccent else TextMuted
+                                ),
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
                 Text(
                     text = app.packageName,
                     style = MaterialTheme.typography.labelSmall.copy(
@@ -295,20 +325,37 @@ fun AppItemRow(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            if (!app.isSystemApp && !app.isProtectedRole) {
-                FilledTonalButton(
-                    onClick = onToggle,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = if (isWhitelisted) EmeraldSurface else DarkSurfaceElevated,
-                        contentColor = if (isWhitelisted) SuccessEmerald else TextSecondary
-                    ),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = if (isWhitelisted) "Whitelisted" else "Protect",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
-                    )
+            if (!app.isProtectedRole) {
+                if (app.isSystemApp) {
+                    FilledTonalButton(
+                        onClick = onToggleIncludedSystemApp,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = if (isIncludedSystemApp) BluePrimary else DarkSurfaceElevated,
+                            contentColor = if (isIncludedSystemApp) Color.White else TextSecondary
+                        ),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = if (isIncludedSystemApp) "Kill Enabled" else "+ Add to Kill",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                        )
+                    }
+                } else {
+                    FilledTonalButton(
+                        onClick = onToggleWhitelist,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = if (isWhitelisted) EmeraldSurface else DarkSurfaceElevated,
+                            contentColor = if (isWhitelisted) SuccessEmerald else TextSecondary
+                        ),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = if (isWhitelisted) "Whitelisted" else "Protect",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                        )
+                    }
                 }
             } else {
                 Surface(
@@ -316,7 +363,7 @@ fun AppItemRow(
                     color = DarkSurfaceElevated
                 ) {
                     Text(
-                        text = if (app.isProtectedRole) "SYSTEM ROLE" else "SYSTEM APP",
+                        text = "SYSTEM ROLE",
                         style = MaterialTheme.typography.labelSmall.copy(
                             color = TextMuted,
                             fontSize = 9.sp,

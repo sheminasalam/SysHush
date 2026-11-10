@@ -42,6 +42,7 @@ class MainActivity : ComponentActivity() {
                 val engageMode by dataStoreRepository.engageModeFlow.collectAsState(initial = EngageMode.BOTH)
                 val activeEngagementMode by dataStoreRepository.activeEngagementModeFlow.collectAsState(initial = null)
                 val whitelist by dataStoreRepository.whitelistFlow.collectAsState(initial = emptySet())
+                val includedSystemApps by dataStoreRepository.includedSystemAppsFlow.collectAsState(initial = emptySet())
                 val lastOperation by dataStoreRepository.lastOperationFlow.collectAsState(
                     initial = Triple("IDLE", "Ready to configure", 0L)
                 )
@@ -65,18 +66,28 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (showWhitelistScreen) {
-                    val allApps = remember(whitelist) {
-                        applicationManager.getInstalledApplications(whitelist)
+                    val allApps = remember(whitelist, includedSystemApps) {
+                        applicationManager.getInstalledApplications(whitelist, includedSystemApps)
                     }
                     WhitelistScreen(
                         apps = allApps,
                         whitelist = whitelist,
+                        includedSystemApps = includedSystemApps,
                         onToggleWhitelist = { pkg ->
                             coroutineScope.launch {
                                 if (whitelist.contains(pkg)) {
                                     dataStoreRepository.removeFromWhitelist(pkg)
                                 } else {
                                     dataStoreRepository.addToWhitelist(pkg)
+                                }
+                            }
+                        },
+                        onToggleIncludedSystemApp = { pkg ->
+                            coroutineScope.launch {
+                                if (includedSystemApps.contains(pkg)) {
+                                    dataStoreRepository.removeIncludedSystemApp(pkg)
+                                } else {
+                                    dataStoreRepository.addIncludedSystemApp(pkg)
                                 }
                             }
                         },
