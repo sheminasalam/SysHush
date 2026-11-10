@@ -469,13 +469,7 @@ class StatusBarAccessibilityService : AccessibilityService() {
 
         delay(250)
         if (returnToHome) {
-            if (mode is TargetMode.ForceStopOnly) {
-                // The dedicated Force Stop widget should return to the screen
-                // underneath Settings instead of navigating to launcher Home.
-                performGlobalAction(GLOBAL_ACTION_BACK)
-            } else {
-                returnToHomeScreen()
-            }
+            returnToHomeScreen()
         } else {
             returnToApp()
         }
@@ -1382,15 +1376,6 @@ class StatusBarAccessibilityService : AccessibilityService() {
     }
 
     private fun returnToHomeScreen() {
-        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_HOME)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        }
-        try {
-            startActivity(homeIntent)
-        } catch (_: Exception) {
-            // fallback
-        }
         performGlobalAction(GLOBAL_ACTION_HOME)
     }
 
@@ -1410,8 +1395,6 @@ class StatusBarAccessibilityService : AccessibilityService() {
             currentStep = AutomationStep.FAILED,
             operationTitle = "Automation Error",
             currentOperation = reason,
-            // A failed run must not look like 100% success. Preserve the last
-            // completed stage percentage as a diagnostic indicator.
             percentage = _progressState.value.percentage.coerceIn(0, 99),
             errorReason = reason
         )
@@ -1421,6 +1404,8 @@ class StatusBarAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             dataStoreRepository.recordOperation("FAILED", reason)
         }
+
+        showToast("SysHush: $reason")
 
         // Return to Launcher Home if initiated from widget, otherwise return to SysHush
         if (returnToHome) {

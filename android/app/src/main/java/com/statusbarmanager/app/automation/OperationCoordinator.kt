@@ -33,13 +33,40 @@ class OperationCoordinator(
     val isServiceConnected: StateFlow<Boolean> = StatusBarAccessibilityService.isServiceConnected
     val progressState: StateFlow<AutomationProgress> = StatusBarAccessibilityService.progressState
 
+    suspend fun waitForServiceConnection(maxWaitMs: Long = 1500): Boolean {
+        if (StatusBarAccessibilityService.instance != null) return true
+        val start = System.currentTimeMillis()
+        while (System.currentTimeMillis() - start < maxWaitMs) {
+            kotlinx.coroutines.delay(100)
+            if (StatusBarAccessibilityService.instance != null) return true
+        }
+        return StatusBarAccessibilityService.instance != null
+    }
+
+    private fun showServiceMissingFeedback(fromWidget: Boolean) {
+        if (fromWidget) {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(
+                    context,
+                    "SysHush Accessibility Service is not active. Please enable it in Settings.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
     /**
      * Executes the Engage action according to the currently configured EngageMode.
      */
     suspend fun engage(fromWidget: Boolean = false): Boolean {
-        val service = StatusBarAccessibilityService.instance
+        var service = StatusBarAccessibilityService.instance
+        if (service == null && fromWidget) {
+            waitForServiceConnection(1200)
+            service = StatusBarAccessibilityService.instance
+        }
         if (service == null) {
             Log.e(TAG, "Cannot engage: StatusBarAccessibilityService is not connected")
+            showServiceMissingFeedback(fromWidget)
             return false
         }
 
@@ -75,9 +102,14 @@ class OperationCoordinator(
             return disengage(fromWidget)
         }
 
-        val service = StatusBarAccessibilityService.instance
+        var service = StatusBarAccessibilityService.instance
+        if (service == null && fromWidget) {
+            waitForServiceConnection(1200)
+            service = StatusBarAccessibilityService.instance
+        }
         if (service == null) {
             Log.e(TAG, "Cannot hide status bar: accessibility service is unavailable")
+            showServiceMissingFeedback(fromWidget)
             return false
         }
 
@@ -89,9 +121,14 @@ class OperationCoordinator(
 
     /** Runs the dedicated app-only widget action without changing the configured Hush Button mode. */
     suspend fun forceStopAppsOnly(fromWidget: Boolean = false): Boolean {
-        val service = StatusBarAccessibilityService.instance
+        var service = StatusBarAccessibilityService.instance
+        if (service == null && fromWidget) {
+            waitForServiceConnection(1200)
+            service = StatusBarAccessibilityService.instance
+        }
         if (service == null) {
             Log.e(TAG, "Cannot stop running apps: accessibility service is unavailable")
+            showServiceMissingFeedback(fromWidget)
             return false
         }
         // A dedicated Stop Apps action is one-shot. Keep any existing
@@ -107,9 +144,14 @@ class OperationCoordinator(
      * NEVER relaunches or restarts stopped apps.
      */
     suspend fun disengage(fromWidget: Boolean = false): Boolean {
-        val service = StatusBarAccessibilityService.instance
+        var service = StatusBarAccessibilityService.instance
+        if (service == null && fromWidget) {
+            waitForServiceConnection(1200)
+            service = StatusBarAccessibilityService.instance
+        }
         if (service == null) {
             Log.e(TAG, "Cannot disengage: StatusBarAccessibilityService is not connected")
+            showServiceMissingFeedback(fromWidget)
             return false
         }
 

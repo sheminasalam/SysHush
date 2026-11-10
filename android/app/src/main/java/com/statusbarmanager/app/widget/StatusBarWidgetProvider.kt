@@ -39,30 +39,51 @@ class StatusBarWidgetProvider : AppWidgetProvider() {
 
         fun updateAllWidgets(context: Context) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
-            val componentName = ComponentName(context, StatusBarWidgetProvider::class.java)
-            val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
-            if (appWidgetIds.isNotEmpty()) {
-                val intent = Intent(context, StatusBarWidgetProvider::class.java).apply {
-                    action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
-                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, appWidgetIds)
+            val providers = listOf(
+                StatusBarWidgetProvider::class.java,
+                HushButtonIconWidgetProvider::class.java,
+                StopAppsWidgetProvider::class.java,
+                StatusBarOnlyWidgetProvider::class.java
+            )
+            for (providerClass in providers) {
+                try {
+                    val componentName = ComponentName(context, providerClass)
+                    val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
+                    if (appWidgetIds.isNotEmpty()) {
+                        val intent = Intent(context, providerClass).apply {
+                            action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
+                            putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, appWidgetIds)
+                        }
+                        context.sendBroadcast(intent)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("StatusBarWidget", "Failed to broadcast update to ${providerClass.simpleName}: ${e.message}")
                 }
-                context.sendBroadcast(intent)
             }
         }
     }
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        val pendingResult = goAsync()
         val repo = DataStoreRepository(context)
         val automationManager = SettingsAutomationManager(context)
 
         CoroutineScope(Dispatchers.IO).launch {
-            val isHideActive = repo.isHideActiveFlow.first()
-            val backupModel = repo.backupModelFlow.first()
-            val engageMode = repo.engageModeFlow.first()
-            val isAccGranted = automationManager.isAccessibilityPermissionGranted()
+            try {
+                val isHideActive = repo.isHideActiveFlow.first()
+                val backupModel = repo.backupModelFlow.first()
+                val engageMode = repo.engageModeFlow.first()
+                val isAccGranted = automationManager.isAccessibilityPermissionGranted()
 
-            for (widgetId in appWidgetIds) {
-                updateAppWidget(context, appWidgetManager, widgetId, isHideActive, backupModel?.isPartial ?: false, engageMode, isAccGranted)
+                for (widgetId in appWidgetIds) {
+                    try {
+                        updateAppWidget(context, appWidgetManager, widgetId, isHideActive, backupModel?.isPartial ?: false, engageMode, isAccGranted)
+                    } catch (e: Exception) {
+                        android.util.Log.e("StatusBarWidget", "Failed to update widget $widgetId: ${e.message}")
+                    }
+                }
+            } finally {
+                pendingResult.finish()
             }
         }
     }
@@ -74,6 +95,7 @@ class StatusBarWidgetProvider : AppWidgetProvider() {
             intent.action != ACTION_WIDGET_STATUS_BAR_ONLY
         ) return
 
+        val pendingResult = goAsync()
         val repo = DataStoreRepository(context)
         val backupManager = SettingsBackupManager(repo)
         val automationManager = SettingsAutomationManager(context)
@@ -89,31 +111,34 @@ class StatusBarWidgetProvider : AppWidgetProvider() {
 
         if (!automationManager.isAccessibilityPermissionGranted()) {
             openMain("prompt_accessibility")
+            pendingResult.finish()
             return
         }
+
         CoroutineScope(Dispatchers.IO).launch {
-            if (intent.action == ACTION_WIDGET_STATUS_BAR_ONLY) {
-                coordinator.toggleStatusBarOnly(fromWidget = true)
+            try {
+                when (intent.action) {
+                    ACTION_WIDGET_STATUS_BAR_ONLY -> {
+                        coordinator.toggleStatusBarOnly(fromWidget = true)
+                    }
+                    ACTION_WIDGET_FORCE_STOP -> {
+                        coordinator.forceStopAppsOnly(fromWidget = true)
+                    }
+                    else -> {
+                        val isHideActive = repo.isHideActiveFlow.first()
+                        if (isHideActive) {
+                            coordinator.disengage(fromWidget = true)
+                        } else {
+                            coordinator.engage(fromWidget = true)
+                        }
+                    }
+                }
                 updateAllWidgets(context)
-                return@launch
+            } catch (e: Exception) {
+                android.util.Log.e("StatusBarWidget", "Error executing widget action: ${e.message}", e)
+            } finally {
+                pendingResult.finish()
             }
-
-            if (intent.action == ACTION_WIDGET_FORCE_STOP) {
-                coordinator.forceStopAppsOnly(fromWidget = true)
-                updateAllWidgets(context)
-                return@launch
-            }
-
-            val isHideActive = repo.isHideActiveFlow.first()
-            if (isHideActive) {
-                coordinator.disengage(fromWidget = true)
-                updateAllWidgets(context)
-                return@launch
-            }
-
-            val engageMode = repo.engageModeFlow.first()
-            coordinator.engage(fromWidget = true)
-            updateAllWidgets(context)
         }
     }
 

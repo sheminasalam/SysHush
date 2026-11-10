@@ -7,6 +7,7 @@
 
     <!-- Strictly Square 56x56dp Squircle Cube Container (1:1 aspect ratio, matches native app icon) -->
     <FrameLayout
+        android:id="@+id/quick_action_icon_container"
         android:layout_width="56dp"
         android:layout_height="56dp"
         android:layout_gravity="center"

@@ -37,10 +37,54 @@ class ApplicationManager(private val context: Context) {
 
     private val packageManager: PackageManager = context.packageManager
 
-    private fun getDefaultLauncherPackage(): String? {
-        val intent = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_HOME) }
-        val resolveInfo = packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
-        return resolveInfo?.activityInfo?.packageName
+    private val knownLauncherPrefixes = listOf(
+        "com.coloros.launcher",
+        "com.oppo.launcher",
+        "com.heytap.launcher",
+        "com.oneplus.launcher",
+        "com.android.launcher",
+        "com.google.android.apps.nexuslauncher",
+        "com.sec.android.app.launcher",
+        "com.miui.home",
+        "com.huawei.android.launcher",
+        "com.transsion.launcher",
+        "com.transsion.hilauncher",
+        "com.transsion.xoslauncher",
+        "com.teslacoilsw.launcher",
+        "ch.deletescape.lawnchair",
+        "bitpit.launcher"
+    )
+
+    private fun getAllLauncherPackages(): Set<String> {
+        val launchers = mutableSetOf<String>()
+        try {
+            val intent = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_HOME) }
+            val resolveInfo = packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            val defaultPkg = resolveInfo?.activityInfo?.packageName
+            if (!defaultPkg.isNullOrBlank() && defaultPkg != "android") {
+                launchers.add(defaultPkg)
+            }
+
+            val allHomeActivities = packageManager.queryIntentActivities(
+                intent,
+                PackageManager.MATCH_ALL
+            )
+            for (ri in allHomeActivities) {
+                val pkg = ri.activityInfo?.packageName
+                if (!pkg.isNullOrBlank() && pkg != "android") {
+                    launchers.add(pkg)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error resolving launchers: ${e.message}")
+        }
+        return launchers
+    }
+
+    private fun isLauncherPackage(pkg: String, allLaunchers: Set<String>): Boolean {
+        if (allLaunchers.contains(pkg)) return true
+        val lower = pkg.lowercase()
+        return knownLauncherPrefixes.any { lower.startsWith(it) }
     }
 
     private fun getActiveInputMethodPackage(): String? {
@@ -86,7 +130,7 @@ class ApplicationManager(private val context: Context) {
         }
 
         val myPackage = context.packageName
-        val launcherPackage = getDefaultLauncherPackage()
+        val allLaunchers = getAllLauncherPackages()
         val imePackage = getActiveInputMethodPackage()
         val dialerPackage = getDefaultDialerPackage()
         val smsPackage = getDefaultSmsPackage()
@@ -105,7 +149,7 @@ class ApplicationManager(private val context: Context) {
 
             val protectionReason = when {
                 pkg == myPackage -> "Self (SysHush)"
-                pkg == launcherPackage -> "Active Home Launcher"
+                isLauncherPackage(pkg, allLaunchers) -> "Active Home Launcher"
                 pkg == imePackage -> "Active Input Method (Keyboard)"
                 pkg == dialerPackage -> "Default Phone / Dialer"
                 pkg == smsPackage -> "Default Messaging Handler"
@@ -140,19 +184,20 @@ class ApplicationManager(private val context: Context) {
         includedSystemApps: Set<String> = emptySet()
     ): List<AppItem> {
         val myPackage = context.packageName
-        val launcherPackage = getDefaultLauncherPackage()
+        val allLaunchers = getAllLauncherPackages()
         val imePackage = getActiveInputMethodPackage()
         val dialerPackage = getDefaultDialerPackage()
         val smsPackage = getDefaultSmsPackage()
 
         fun isProtected(pkg: String): Boolean =
             pkg == myPackage ||
-            pkg == launcherPackage ||
+            isLauncherPackage(pkg, allLaunchers) ||
             pkg == imePackage ||
             pkg == dialerPackage ||
             pkg == smsPackage ||
             pkg.startsWith("com.android.systemui") ||
-            pkg.startsWith("com.google.android.inputmethod")
+            pkg.startsWith("com.google.android.inputmethod") ||
+            pkg.contains("wallpaper")
 
         // 1. Inspect live process importance if accessible by system
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager

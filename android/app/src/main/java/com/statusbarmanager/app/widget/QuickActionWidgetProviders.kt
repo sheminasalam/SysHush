@@ -15,18 +15,23 @@ abstract class IconActionWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
         appWidgetIds.forEach { appWidgetId ->
-            val views = RemoteViews(context.packageName, layoutId)
-            val actionIntent = Intent(context, StatusBarWidgetProvider::class.java).apply {
-                action = this@IconActionWidgetProvider.action
+            try {
+                val views = RemoteViews(context.packageName, layoutId)
+                val actionIntent = Intent(context, StatusBarWidgetProvider::class.java).apply {
+                    action = this@IconActionWidgetProvider.action
+                }
+                val pendingIntent = PendingIntent.getBroadcast(
+                    context,
+                    requestCodeBase + appWidgetId,
+                    actionIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                views.setOnClickPendingIntent(R.id.quick_action_root, pendingIntent)
+                views.setOnClickPendingIntent(R.id.quick_action_icon_container, pendingIntent)
+                manager.updateAppWidget(appWidgetId, views)
+            } catch (e: Exception) {
+                android.util.Log.e("IconActionWidget", "Error updating widget $appWidgetId: ${e.message}")
             }
-            val pendingIntent = PendingIntent.getBroadcast(
-                context,
-                requestCodeBase + appWidgetId,
-                actionIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            views.setOnClickPendingIntent(R.id.quick_action_root, pendingIntent)
-            manager.updateAppWidget(appWidgetId, views)
         }
     }
 }
