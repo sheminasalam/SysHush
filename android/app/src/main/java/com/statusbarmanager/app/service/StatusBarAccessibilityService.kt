@@ -1373,6 +1373,8 @@ class StatusBarAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             true
         }
+    }
+
     private fun showToast(message: String) {
         Handler(Looper.getMainLooper()).post {
             Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
