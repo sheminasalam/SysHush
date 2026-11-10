@@ -469,7 +469,12 @@ class StatusBarAccessibilityService : AccessibilityService() {
 
         delay(250)
         if (returnToHome) {
-            returnToHomeScreen()
+            if (mode is TargetMode.ForceStopOnly) {
+                // Exit back to the exact launcher page where the widget icon was pressed
+                performGlobalAction(GLOBAL_ACTION_BACK)
+            } else {
+                returnToHomeScreen()
+            }
         } else {
             returnToApp()
         }
@@ -1409,7 +1414,7 @@ class StatusBarAccessibilityService : AccessibilityService() {
 
         // Return to Launcher Home if initiated from widget, otherwise return to SysHush
         if (returnToHome) {
-            returnToHomeScreen()
+            performGlobalAction(GLOBAL_ACTION_BACK)
         } else {
             returnToApp()
         }
