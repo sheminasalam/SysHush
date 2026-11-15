@@ -282,13 +282,48 @@ internal object ForceStopMatcher {
                 return true
             }
             if (HEADER_TITLE_IDS.any { lowerId.endsWith(it) }) {
-                if (normText.startsWith("$normLabel ", ignoreCase = true) ||
-                    normText.startsWith("$normLabel(", ignoreCase = true)
-                ) {
+                if (matchesHeaderWithVersionMetadata(nodeText, normText, normLabel)) {
                     return true
                 }
             }
         }
+        return false
+    }
+
+    private fun matchesHeaderWithVersionMetadata(
+        rawText: String?,
+        normText: String,
+        normLabel: String
+    ): Boolean {
+        if (rawText == null || normLabel.isEmpty()) return false
+
+        // Multi-line OEM header: line 1 is exact app label, line 2 is version/size metadata
+        val rawLines = rawText.split('\n', '\r')
+            .map { normalize(it) }
+            .filter { it.isNotEmpty() }
+        if (rawLines.size >= 2 && rawLines[0].equals(normLabel, ignoreCase = true)) {
+            val secondLine = rawLines[1].lowercase()
+            if (secondLine.startsWith("version") ||
+                secondLine.startsWith("ver ") ||
+                secondLine.startsWith("ver.") ||
+                Regex("^v?\\d+(?:\\.\\d+)+.*$").matches(secondLine)
+            ) {
+                return true
+            }
+        }
+
+        // Single-line OEM header with strictly version parenthetical suffix: e.g. "Chrome (120.0.6099)" or "Chrome (v120)"
+        if (normText.length > normLabel.length && normText.startsWith(normLabel, ignoreCase = true)) {
+            val suffix = normText.substring(normLabel.length).trim()
+            val versionParenPattern = Regex(
+                "^\\((?:v(?:er(?:sion)?)?\\.?\\s*\\d[0-9._-]*|\\d+(?:\\.\\d+)+[0-9._-]*)\\)$",
+                RegexOption.IGNORE_CASE
+            )
+            if (versionParenPattern.matches(suffix)) {
+                return true
+            }
+        }
+
         return false
     }
 
