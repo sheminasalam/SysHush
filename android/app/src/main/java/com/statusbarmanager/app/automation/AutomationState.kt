@@ -83,6 +83,7 @@ data class AppForceStopStats(
     val skippedProtected: Int = 0,
     val skippedWhitelisted: Int = 0,
     val failed: Int = 0,
+    val unknown: Int = 0,
     val remaining: Int = 0,
     val currentAppName: String = ""
 )

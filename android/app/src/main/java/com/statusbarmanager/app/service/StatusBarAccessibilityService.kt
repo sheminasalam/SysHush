@@ -4,8 +4,10 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.graphics.Path
 import android.graphics.Rect
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -48,6 +50,9 @@ class StatusBarAccessibilityService : AccessibilityService() {
     private var currentAutomationJob: Job? = null
     private var isAutomationRunning = false
 
+    @Volatile
+    private var activeForceStopController: AppForceStopAccessibilityController? = null
+
     override fun onCreate() {
         super.onCreate()
         dataStoreRepository = DataStoreRepository(applicationContext)
@@ -74,10 +79,18 @@ class StatusBarAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !isAutomationRunning) return
-        val packageName = event.packageName?.toString() ?: ""
-        if (packageName.contains("settings", ignoreCase = true)) {
-            Log.d(TAG, "Settings window event: ${event.eventType}")
+        val eventType = event.eventType
+        if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        ) {
+            return
         }
+
+        val packageName = event.packageName?.toString() ?: ""
+        if (packageName == applicationContext.packageName) return
+
+        val className = event.className?.toString() ?: ""
+        activeForceStopController?.notifyWindowEvent(eventType, packageName, className)
     }
 
     override fun onInterrupt() {
@@ -316,7 +329,7 @@ class StatusBarAccessibilityService : AccessibilityService() {
             updateChecklist("scan_apps", StepStatus.IN_PROGRESS)
             updateChecklist("apps", StepStatus.IN_PROGRESS)
             publish(AutomationStep.SCANNING_APPLICATIONS, "Scanning eligible applications...", 60, 5, iconStats = stats)
-            
+
             val includedSystemApps = dataStoreRepository.getIncludedSystemApps()
             val eligibleApps = appManager.getEligibleAppsForForceStop(userWhitelist, includedSystemApps)
             Log.i(TAG, "Discovered ${eligibleApps.size} eligible applications for force-stop batch (included system apps: ${includedSystemApps.size})")
@@ -329,73 +342,133 @@ class StatusBarAccessibilityService : AccessibilityService() {
 
             if (eligibleApps.isNotEmpty()) {
                 updateChecklist("force_stop", StepStatus.IN_PROGRESS)
+                activeForceStopController = forceStopController
+                try {
+                    val pass1Results = linkedMapOf<String, ForceStopResult>()
+                    val pass2Results = linkedMapOf<String, ForceStopResult>()
 
-                // Pass 1: Primary force stop pass across all eligible apps
-                eligibleApps.forEachIndexed { idx, app ->
-                    val appProgressPercent = 60 + ((idx + 1) * 25 / eligibleApps.size)
-                    currentAppStats = currentAppStats.copy(
-                        currentAppName = app.appName,
-                        remaining = eligibleApps.size - idx
-                    )
+                    // Pass 1: Process all eligible applications
+                    eligibleApps.forEachIndexed { idx, app ->
+                        val appProgressPercent = 60 + ((idx + 1) * 25 / eligibleApps.size)
+                        currentAppStats = currentAppStats.copy(
+                            currentAppName = app.appName,
+                            remaining = eligibleApps.size - idx
+                        )
 
-                    publish(
-                        AutomationStep.FORCE_STOPPING_APPS,
-                        "Force-stopping ${app.appName} (${idx + 1}/${eligibleApps.size})...",
-                        appProgressPercent,
-                        6,
-                        iconStats = stats,
-                        appStats = currentAppStats
-                    )
-
-                    forceStopController.forceStopApp(app, includedSystemApps)
-                    delay(120)
-                }
-
-                // Verify Ground Truth via ApplicationInfo.FLAG_STOPPED:
-                // Any app where (flags and FLAG_STOPPED) == 0 is STILL RUNNING!
-                val pendingRetryApps = eligibleApps.filter { app ->
-                    !isAppStopped(app.packageName)
-                }
-
-                // Automatic Pass 2: Single retry pass for any applications that are still running after Pass 1
-                if (pendingRetryApps.isNotEmpty()) {
-                    Log.i(TAG, "Pass 1 complete. ${pendingRetryApps.size} apps remain running. Executing Pass 2...")
-                    delay(150)
-                    pendingRetryApps.forEachIndexed { rIdx, app ->
                         publish(
                             AutomationStep.FORCE_STOPPING_APPS,
-                            "Retrying ${app.appName} (Pass 2: ${rIdx + 1}/${pendingRetryApps.size})...",
-                            85 + ((rIdx + 1) * 10 / pendingRetryApps.size),
+                            "Force-stopping ${app.appName} (${idx + 1}/${eligibleApps.size})...",
+                            appProgressPercent,
                             6,
                             iconStats = stats,
                             appStats = currentAppStats
                         )
-                        forceStopController.forceStopApp(app, includedSystemApps)
-                        delay(120)
+
+                        val outcome = try {
+                            forceStopController.forceStopApp(app, includedSystemApps)
+                        } catch (ce: CancellationException) {
+                            throw ce
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Pass 1 failure for ${app.packageName}: ${e.message}", e)
+                            ForceStopResult.FAILED_CONFIRMATION
+                        }
+                        pass1Results[app.packageName] = outcome
+                        yield()
                     }
+
+                    // Verification: Check each application's actual stopped state via PackageManager
+                    val pendingRetryApps = eligibleApps.filter { app ->
+                        val pass1Outcome = pass1Results[app.packageName] ?: ForceStopResult.FAILED_CONFIRMATION
+                        if (pass1Outcome == ForceStopResult.SKIPPED_PROTECTED ||
+                            pass1Outcome == ForceStopResult.SKIPPED_WHITELISTED
+                        ) {
+                            return@filter false
+                        }
+                        checkAppStoppedState(app.packageName) == AppStoppedState.RUNNING
+                    }
+
+                    // Pass 2: Retry only applications still confirmed as running (unstopped)
+                    if (pendingRetryApps.isNotEmpty()) {
+                        Log.i(TAG, "Pass 1 complete. ${pendingRetryApps.size} apps confirmed running. Executing Pass 2...")
+                        pendingRetryApps.forEachIndexed { rIdx, app ->
+                            // Never retry if already confirmed stopped before starting
+                            if (checkAppStoppedState(app.packageName) == AppStoppedState.STOPPED) {
+                                pass2Results[app.packageName] = ForceStopResult.SUCCESSFULLY_STOPPED
+                                return@forEachIndexed
+                            }
+
+                            publish(
+                                AutomationStep.FORCE_STOPPING_APPS,
+                                "Retrying ${app.appName} (Pass 2: ${rIdx + 1}/${pendingRetryApps.size})...",
+                                85 + ((rIdx + 1) * 10 / pendingRetryApps.size),
+                                6,
+                                iconStats = stats,
+                                appStats = currentAppStats
+                            )
+
+                            val retryOutcome = try {
+                                forceStopController.forceStopApp(app, includedSystemApps)
+                            } catch (ce: CancellationException) {
+                                throw ce
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Pass 2 failure for ${app.packageName}: ${e.message}", e)
+                                ForceStopResult.FAILED_CONFIRMATION
+                            }
+                            pass2Results[app.packageName] = retryOutcome
+                            yield()
+                        }
+                    }
+
+                    // Final verification: Reconcile controller outcome + PackageManager ground truth
+                    val finalOutcomes = eligibleApps.map { app ->
+                        val latestControllerResult = pass2Results[app.packageName]
+                            ?: pass1Results[app.packageName]
+                            ?: ForceStopResult.FAILED_CONFIRMATION
+                        val finalPmState = checkAppStoppedState(app.packageName)
+                        ForceStopMatcher.reconcileFinalAppOutcome(latestControllerResult, finalPmState)
+                    }
+
+                    currentAppStats = ForceStopMatcher.computeBatchStats(
+                        totalEligible = eligibleApps.size,
+                        outcomes = finalOutcomes
+                    )
+
+                    if (currentAppStats.failed > 0 || currentAppStats.unknown > 0) {
+                        isPartial = true
+                    }
+
+                    val summaryParts = mutableListOf<String>()
+                    summaryParts.add("${currentAppStats.successfullyStopped} stopped")
+                    if (currentAppStats.alreadyStopped > 0) {
+                        summaryParts.add("${currentAppStats.alreadyStopped} already off")
+                    }
+                    val skippedTotal = currentAppStats.skippedProtected + currentAppStats.skippedWhitelisted
+                    if (skippedTotal > 0) {
+                        summaryParts.add("$skippedTotal skipped")
+                    }
+                    if (currentAppStats.failed > 0) {
+                        summaryParts.add("${currentAppStats.failed} failed")
+                    }
+                    if (currentAppStats.unknown > 0) {
+                        summaryParts.add("${currentAppStats.unknown} unknown")
+                    }
+                    val appSummary = summaryParts.joinToString(", ")
+                    val stepStatus = if (currentAppStats.failed == 0 && currentAppStats.unknown == 0) {
+                        StepStatus.COMPLETED
+                    } else {
+                        StepStatus.PARTIAL
+                    }
+
+                    updateChecklist("force_stop", stepStatus, appSummary)
+                    updateChecklist("apps", stepStatus, appSummary)
+                    updateChecklist("verify_apps", stepStatus, appSummary)
+                } finally {
+                    activeForceStopController = null
                 }
-
-                // Final ground-truth calculation from Android OS
-                val trulyUnstopped = eligibleApps.filter { app -> !isAppStopped(app.packageName) }
-                val trulyStopped = eligibleApps.filter { app -> isAppStopped(app.packageName) }
-                val stoppedCount = trulyStopped.size
-                val failedCount = trulyUnstopped.size
-
-                if (failedCount > 0) isPartial = true
-
-                currentAppStats = currentAppStats.copy(
-                    successfullyStopped = stoppedCount,
-                    alreadyStopped = 0,
-                    failed = failedCount,
-                    remaining = 0,
-                    currentAppName = ""
-                )
-                val appSummary = "$stoppedCount apps force-stopped" + if (failedCount > 0) ", $failedCount skipped" else ""
-                updateChecklist("force_stop", if (failedCount == 0) StepStatus.COMPLETED else StepStatus.PARTIAL, appSummary)
-                updateChecklist("apps", if (failedCount == 0) StepStatus.COMPLETED else StepStatus.PARTIAL, appSummary)
             } else {
                 updateChecklist("force_stop", StepStatus.COMPLETED, "0 eligible apps to process")
                 updateChecklist("apps", StepStatus.COMPLETED, "0 eligible apps to process")
+                updateChecklist("verify_apps", StepStatus.COMPLETED, "0 eligible apps to process")
                 showToast("No apps need stopping")
             }
         }
@@ -438,7 +511,15 @@ class StatusBarAccessibilityService : AccessibilityService() {
         } else if (isForceStopMode) {
             // Do not set or clear IS_HIDE_ACTIVE here. The action stops apps once;
             // it must neither switch Hush Button on nor disturb an active status bar.
-            val logMsg = "Force stop completed: ${currentAppStats.successfullyStopped} stopped, ${currentAppStats.alreadyStopped} already off, ${currentAppStats.failed} failed."
+            val skippedTotal = currentAppStats.skippedProtected + currentAppStats.skippedWhitelisted
+            val logMsg = buildString {
+                append("Force stop completed: ${currentAppStats.successfullyStopped} stopped, ")
+                append("${currentAppStats.alreadyStopped} already off, ")
+                append("${currentAppStats.failed} failed")
+                if (skippedTotal > 0) append(", $skippedTotal skipped")
+                if (currentAppStats.unknown > 0) append(", ${currentAppStats.unknown} unknown")
+                append(".")
+            }
             dataStoreRepository.recordOperation(if (isPartial) "PARTIAL" else "SUCCESS", logMsg)
             updateChecklist("verify", StepStatus.COMPLETED)
             publish(
@@ -1364,13 +1445,20 @@ class StatusBarAccessibilityService : AccessibilityService() {
 
     /**
      * Checks authoritative system PackageManager ground truth for whether an app is stopped.
+     * Distinguishes STOPPED, RUNNING, and UNKNOWN (never returns STOPPED on exception).
      */
-    private fun isAppStopped(packageName: String): Boolean {
+    private fun checkAppStoppedState(packageName: String): AppStoppedState {
         return try {
-            val appInfo = packageManager.getApplicationInfo(packageName, 0)
-            (appInfo.flags and ApplicationInfo.FLAG_STOPPED) != 0
+            val appInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getApplicationInfo(packageName, PackageManager.ApplicationInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getApplicationInfo(packageName, 0)
+            }
+            ForceStopMatcher.classifyStoppedState(appInfo.flags)
         } catch (e: Exception) {
-            true
+            Log.w(TAG, "Unable to verify stopped state via PackageManager for $packageName: ${e.message}")
+            AppStoppedState.UNKNOWN
         }
     }
 
